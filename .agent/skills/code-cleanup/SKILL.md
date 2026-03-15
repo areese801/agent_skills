@@ -29,12 +29,15 @@ When activated to clean up code based on review feedback, execute this exact wor
 
 ### Step 4: Address Non-Trivial Refactors (Optional/Context-Dependent)
 - For `CRITICAL` or `HIGH` issues that *do not* have an exact diff, but provide alternative approaches or refactoring suggestions, use your best engineering judgment to implement the fix.
-- Feel free to make breaking changes. Maintaining backwards compatibility is not a priority; the priority is clean, well-architected code.
+- **Do not make breaking changes without asking.** If a suggested fix would change public API signatures, remove public methods, or alter behavior, flag it to the user and get explicit approval before proceeding.
 - If a suggested refactor is too large, risky, or requires architectural decisions beyond your scope, skip it and clearly note it for the human developer.
 
 ### Step 5: Post-Cleanup Formatting & Linting
 - After all edits are made, run standard formatting and linting tools to ensure the changes align with project standards.
-- Run `uv run ruff check --fix .` or equivalent commands based on the project's global Python configuration.
+- Detect the project's formatting/linting setup and run the appropriate tool:
+  - If `ruff` is configured (check `pyproject.toml` for `[tool.ruff]` or a `ruff.toml`): `ruff check --fix . && ruff format .`
+  - Otherwise, fall back to the project's configured formatter.
+- If the project uses `uv` (check for `uv.lock` or `[tool.uv]` in `pyproject.toml`), prefix commands with `uv run`.
 
 ### Step 6: Final Reporting
 - Provide a summary to the user detailing:
@@ -43,6 +46,6 @@ When activated to clean up code based on review feedback, execute this exact wor
   - Any outstanding `CRITICAL` or `HIGH` issues that required human intervention or were skipped due to complexity.
 
 ## Rules & Guardrails
-- **Breaking changes allowed:** Do not worry about backwards compatibility. Clean, well-architected code is the priority.
+- **No breaking changes without approval:** Always flag breaking changes to the user and get explicit approval before applying them.
 - **Do not hallucinate fixes:** Stick to the suggestions in the feedback report for standard cleanups.
 - **Respect formatting:** Always run the project's designated formatter (e.g., Ruff) after making edits.

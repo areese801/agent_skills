@@ -12,7 +12,8 @@ You are an expert at writing and maintaining Python integration tests using pyte
 When activated to perform integration testing, execute this exact workflow:
 
 ### Step 1: Environment and Setup
-- Ensure the project uses `pytest` as the testing framework (run `uv add --dev pytest` if required, preferring `uv`).
+- Ensure the project uses `pytest` as the testing framework.
+- Detect the project's Python environment: if a `uv.lock` file or `pyproject.toml` with `[tool.uv]` exists, use `uv` commands. Otherwise, use `pip` and `pytest` directly.
 - Integration tests must be placed in a dedicated `tests/integration/` directory to distinguish them from unit tests.
 - If they don't exist, create proper `conftest.py` files to manage shared fixtures for setup and teardown.
 
@@ -34,7 +35,6 @@ When activated to perform integration testing, execute this exact workflow:
 
 ## Rules & Guardrails
 - **DO NOT** mix unit tests and integration tests in the same file or directory.
-- **DO NOT** run `pip` manually; always use `uv` for Python package operations.
-- **DO NOT** invoke tests manually without `uv run pytest`.
+- **DO NOT** invoke tests without the project's standard runner (`uv run pytest` for uv projects, `pytest` otherwise).
 - **DO NOT** mock the core components being integrated; the purpose is to test their real interactions.
 - **DO NOT** leave dangling state (e.g., unclosed database connections or residual rows). Always clean up in fixtures.

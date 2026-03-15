@@ -56,7 +56,7 @@ Use the following checklist for each perspective (expand with domain-specific kn
 
 **Domain & Architecture Guardian**
 - Does this follow team patterns (e.g., use Case classes, repositories, event-driven)?
-- Don't worry about backward compatibility. Breaking changes are allowed and encouraged if it leads to clean, well-architected code.
+- Flag any breaking changes (API signature changes, removed public methods, behavioral changes) as HIGH severity and require explicit user approval before proceeding.
 - Layer violations (controller talking directly to DB)
 
 **Accessibility & UX Quality Advocate** (skip if backend-only)
@@ -112,12 +112,12 @@ If the change is trivial and passes all checks, your output should just be a sho
 ### Step 5: Save Feedback Using Script (MANDATORY)
 **DO NOT write your feedback to a random markdown file directly.**
 Once you have prepared the full complete feedback report (as outlined in Step 4), you MUST save it by executing the provided script.
-Use the `run_command` tool (or execute in your environment) to call the `scripts/save_feedback.py` script, using `uv run` as per global python guidelines. 
+Use the `run_command` tool (or execute in your environment) to call the `scripts/save_feedback.py` script. If the project uses `uv` (check for `uv.lock` or `[tool.uv]` in `pyproject.toml`), use `uv run`; otherwise use `python` directly.
 Pass the module or PR name you reviewed to `--reviewed_module_name` and the entire markdown output to `--feedback`.
 
 Example command:
 ```bash
-uv run scripts/save_feedback.py --reviewed_module_name "my_feature" --feedback "🛡️ Multi-Perspective Code Review..."
+python scripts/save_feedback.py --reviewed_module_name "my_feature" --feedback "🛡️ Multi-Perspective Code Review..."
 ```
 
 *(Note: Do not write your feedback to a temporary file. Simply pass the entire feedback string directly to the script via the `--feedback` argument, adequately quoted.)*

@@ -32,7 +32,10 @@ When asked to write or maintain pytest unit tests, follow these steps:
 - Test external behavior, not internal implementation details, to make tests resilient to refactoring.
 
 ### Step 5: Execution
-- When executing tests, always use `uv run pytest` as per the global user rules.
+- Before running tests, detect the project's Python environment:
+  - If a `uv.lock` file or `pyproject.toml` with `[tool.uv]` exists in the project root, use `uv run pytest`.
+  - Otherwise, use `pytest` directly (assumes the active virtualenv or system Python).
+- Run with `-v` for verbose output on failures.
 
 ## Rules & Guardrails
 - **NEVER** use `unittest.TestCase` classes. Stick to native pytest functions and fixtures.
