@@ -81,3 +81,13 @@ git fetch upstream
 git merge upstream/master
 git push origin main
 ```
+
+**IMPORTANT — Post-sync audit:** After every upstream merge, you MUST audit all new or modified skills for alignment with the user's preferences. The upstream repo is maintained by a different developer whose conventions may differ. Walk through this checklist for each changed skill:
+
+1. **Python runner**: Skills must detect the project environment dynamically (check for `uv.lock` or `[tool.uv]` in `pyproject.toml`). If uv is present, use `uv run`; otherwise use `pytest`/`python` directly. Never hardcode `uv run` as the only option.
+2. **Breaking changes**: Skills must NEVER allow or encourage breaking changes without explicit user approval. Any language like "breaking changes allowed" or "don't worry about backwards compatibility" must be replaced with "flag breaking changes and get user approval before proceeding."
+3. **Formatting/linting tools**: Skills should detect the project's configured formatter (ruff, black, etc.) rather than hardcoding one. Check `pyproject.toml` for `[tool.ruff]`, `ruff.toml`, or similar config.
+4. **General tone**: Skills should ask before acting on anything destructive or irreversible. The user prefers a conservative, approval-first approach.
+5. **Cross-reference with `~/.claude/CLAUDE.md`**: Check that skill conventions don't contradict the user's global Claude Code configuration (docstring style, naming conventions, error handling, etc.).
+
+Report any conflicts found and the changes made to resolve them.
