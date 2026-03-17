@@ -16,10 +16,10 @@ def save_commit_feedback_artifact(reviewed_module_name: str, feedback: str) -> s
 
     Example:
         >>> save_commit_feedback_artifact("src/services/embedding_service", "This is the feedback.")
-        >>> uv run .agent/skills/code-review/scripts/save_feedback.py --reviewed_module_name "src/services/embedding_service" --feedback "This is the feedback."
+        >>> python ~/.claude/skills/code-review/scripts/save_feedback.py --reviewed_module_name "src/services/embedding_service" --feedback "This is the feedback."
     """
     date_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    project_root = Path(__file__).parent.parent.parent.parent.parent
+    project_root = Path.cwd()
     feedback_path = (
         project_root
         / ".agent"

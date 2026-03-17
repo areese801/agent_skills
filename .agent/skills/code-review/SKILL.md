@@ -65,7 +65,8 @@ Use the following checklist for each perspective (expand with domain-specific kn
 
 **Style & Consistency Enforcer**
 - Matches Prettier/ESLint/Ruff/Black rules
-- Imports ordered, comments useful, no TODOs left in production code
+- Imports ordered, comments useful
+- Flag stale or vague TODOs (e.g., `# TODO: fix this`) as LOW severity. Intentional, descriptive TODOs that reference tickets or planned work are acceptable and should not be flagged
 
 ### Step 2: Risk & Impact Assessment
 Assign each finding one of:
@@ -112,12 +113,12 @@ If the change is trivial and passes all checks, your output should just be a sho
 ### Step 5: Save Feedback Using Script (MANDATORY)
 **DO NOT write your feedback to a random markdown file directly.**
 Once you have prepared the full complete feedback report (as outlined in Step 4), you MUST save it by executing the provided script.
-Use the `run_command` tool (or execute in your environment) to call the `scripts/save_feedback.py` script. If the project uses `uv` (check for `uv.lock` or `[tool.uv]` in `pyproject.toml`), use `uv run`; otherwise use `python` directly.
-Pass the module or PR name you reviewed to `--reviewed_module_name` and the entire markdown output to `--feedback`.
+Locate the `save_feedback.py` script. It lives at `scripts/save_feedback.py` relative to this skill's directory (e.g., `~/.claude/skills/code-review/scripts/save_feedback.py` when installed globally, or `.agent/skills/code-review/scripts/save_feedback.py` when project-local).
+Pass the module or PR name you reviewed to `--reviewed_module_name` and the entire markdown output to `--feedback`. The script saves artifacts relative to the current working directory.
 
 Example command:
 ```bash
-python scripts/save_feedback.py --reviewed_module_name "my_feature" --feedback "🛡️ Multi-Perspective Code Review..."
+python ~/.claude/skills/code-review/scripts/save_feedback.py --reviewed_module_name "my_feature" --feedback "🛡️ Multi-Perspective Code Review..."
 ```
 
 *(Note: Do not write your feedback to a temporary file. Simply pass the entire feedback string directly to the script via the `--feedback` argument, adequately quoted.)*
