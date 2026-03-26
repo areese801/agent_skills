@@ -54,7 +54,7 @@ REPO_URL=$(git remote get-url origin)
 If the URL is SSH format (`git@github.com:...`), convert to HTTPS using the helper script:
 
 ```bash
-REPO_URL=$(~/.dotfiles/agent_skills/.agent/skills/cage-orchestrator/scripts/tc-url-convert.sh "$REPO_URL")
+REPO_URL=$(~/.claude/skills/cage-orchestrator/scripts/tc-url-convert.sh "$REPO_URL")
 ```
 
 ### Step 6: Create Cage Environment
@@ -68,16 +68,20 @@ ENV_NAME="${ENV_NAME:-$(basename $(git rev-parse --show-toplevel))}"
 Check if the environment already exists:
 
 ```bash
-trusty-cage list 2>/dev/null | grep -q "$ENV_NAME"
+trusty-cage exists "$ENV_NAME"
 ```
 
-If it exists, ask the user: **reuse**, **destroy and recreate**, or **abort**.
+If exit code is 0 (exists), ask the user: **reuse**, **destroy and recreate**, or **abort**.
 
 To create:
 
 ```bash
 trusty-cage create "$REPO_URL" --name "$ENV_NAME" --auth-mode api_key --no-attach
 ```
+
+> **Note:** `--auth-mode api_key` is hardcoded because cage containers have no persistent
+> credentials — the API key is injected at runtime via `docker exec -e` and never written
+> to disk, which is the safer mode for autonomous agents.
 
 ### Step 7: Launch Inner Claude
 
@@ -143,17 +147,13 @@ Present the summary to the user.
 
 ### Step 10: Export and Overlay
 
-Export the cage environment:
+Export the cage environment directly into the current working directory:
 
 ```bash
-trusty-cage export "$ENV_NAME" --yes
+trusty-cage export "$ENV_NAME" --yes --output-dir .
 ```
 
-Overlay exported files onto the current working directory:
-
-```bash
-rsync -a --exclude '.git/' ~/.trusty-cage/envs/$ENV_NAME/repo/ ./
-```
+This rsyncs container files into the current directory, excluding `.git/` so the host repo's git history is preserved.
 
 Run `git diff` and present the changes to the user.
 
