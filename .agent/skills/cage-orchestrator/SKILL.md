@@ -76,10 +76,8 @@ If it exists, ask the user: **reuse**, **destroy and recreate**, or **abort**.
 To create:
 
 ```bash
-echo "1" | trusty-cage create "$REPO_URL" --name "$ENV_NAME" --no-attach
+trusty-cage create "$REPO_URL" --name "$ENV_NAME" --auth-mode api_key --no-attach
 ```
-
-> **Note:** The `echo "1"` pipes the default auth mode selection (api_key) to bypass the interactive prompt. This is a workaround — trusty-cage lacks a `--auth-mode` flag. See TODO section below.
 
 ### Step 7: Launch Inner Claude
 
@@ -148,10 +146,8 @@ Present the summary to the user.
 Export the cage environment:
 
 ```bash
-echo "y" | trusty-cage export "$ENV_NAME"
+trusty-cage export "$ENV_NAME" --yes
 ```
-
-> **Note:** The `echo "y"` auto-confirms the interactive prompt. Workaround until `--yes` flag is added.
 
 Overlay exported files onto the current working directory:
 
@@ -172,14 +168,14 @@ Ask the user:
 If destroy, run:
 
 ```bash
-echo "y" | trusty-cage destroy "$ENV_NAME"
+trusty-cage destroy "$ENV_NAME" --yes
 ```
 
 ---
 
 ## Inner Agent Protocol
 
-**This section applies when `whoami` returns `trustycage`.**
+**This section applies when `TRUSTY_CAGE=1` is set or `whoami` returns `trustycage`.**
 
 You are running inside a trusty-cage container. You have full autonomy but no git credentials and no push capability.
 
@@ -211,15 +207,7 @@ If you encounter a blocker you cannot resolve:
 
 ---
 
-## TODO: trusty-cage CLI Enhancements
-
-These workarounds are needed because trusty-cage currently lacks automation-friendly flags. Track as issues in the trusty-cage repo:
-
-1. **`--auth-mode <mode>` flag on `create`** — bypass interactive auth mode prompt (currently worked around with `echo "1" |`)
-2. **`--yes` / `-y` flag on `export` and `destroy`** — skip confirmation prompts (currently worked around with `echo "y" |`)
-
 ## Known Limitations
 
-1. **Interactive prompts**: `trusty-cage create` and `export` have interactive prompts. Piped input is the workaround until proper flags are added.
-2. **No streaming progress**: Outer Claude cannot see inner Claude's real-time output. Future enhancement: tail a log file inside the container.
-3. **Single task per session**: One task dispatch per cage. Future: iterative task sending.
+1. **No streaming progress**: Outer Claude cannot see inner Claude's real-time output. Future enhancement: tail a log file inside the container.
+2. **Single task per session**: One task dispatch per cage. Future: iterative task sending.
