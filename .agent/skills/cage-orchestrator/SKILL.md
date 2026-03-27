@@ -159,13 +159,28 @@ Look for messages with "type": "info_response" and a matching "request_id".
 - Do not attempt to read outside ~/.cage/inbox/ — you cannot see the host filesystem
 ```
 
-Launch as a background process using the Bash tool with `run_in_background: true`:
+**Pre-flight check** — verify Claude can start before sending the real task:
 
 ```bash
-docker exec -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
-  -u trustycage "isolated-dev-$ENV_NAME" \
-  claude -p "$INNER_PROMPT" --dangerously-skip-permissions
+tc launch "$ENV_NAME" --test
 ```
+
+If it fails, run `tc auth "$ENV_NAME" --login` to fix credentials interactively.
+
+**Launch** — for short prompts, pass inline:
+
+```bash
+tc launch "$ENV_NAME" --prompt "$INNER_PROMPT" --background
+```
+
+For long prompts, write to a temp file first:
+
+```bash
+echo "$INNER_PROMPT" > /tmp/cage-prompt-$ENV_NAME.txt
+tc launch "$ENV_NAME" --prompt-file /tmp/cage-prompt-$ENV_NAME.txt --background
+```
+
+The `--background` flag runs Claude in the background and writes output to `~/.trusty-cage/envs/$ENV_NAME/claude.log`.
 
 Tell the user: "Inner Claude is working in the cage. I'll check on it periodically."
 
