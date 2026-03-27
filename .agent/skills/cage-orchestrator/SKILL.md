@@ -126,7 +126,7 @@ Write a JSON file to ~/.cage/outbox/ with a timestamp-based filename:
   }
   MSGEOF
 
-Generate a unique id with: msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | xxd -p)
+Generate a unique id with: msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 ### Message types you can send
 
@@ -289,7 +289,7 @@ Write a JSON file to `~/.cage/outbox/`:
 
 ```bash
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%S.%3NZ)
-MSG_ID="msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | xxd -p)"
+MSG_ID="msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 cat > ~/.cage/outbox/${TIMESTAMP}.json <<EOF
 {
   "id": "${MSG_ID}",
