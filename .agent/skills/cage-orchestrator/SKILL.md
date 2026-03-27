@@ -5,7 +5,7 @@ description: Orchestrates trusty-cage containers for autonomous AI work. Use whe
 
 # SKILL: Cage Orchestrator
 
-Spin up an isolated trusty-cage container, launch an inner Claude Code agent to work autonomously, monitor for completion, and overlay results back onto the host repo.
+Spin up an isolated trusty-cage container, launch an inner Claude Code agent to work autonomously, monitor for completion via the messaging system, and overlay results back onto the host repo.
 
 ## Step 1: Detection Gate
 
@@ -82,6 +82,9 @@ trusty-cage create "$REPO_URL" --name "$ENV_NAME" --auth-mode api_key --no-attac
 > **Note:** `--auth-mode api_key` is hardcoded because cage containers have no persistent
 > credentials — the API key is injected at runtime via `docker exec -e` and never written
 > to disk, which is the safer mode for autonomous agents.
+>
+> The `create` command automatically initializes messaging directories at
+> `/home/trustycage/.cage/{outbox,inbox,cursor}` inside the container.
 
 ### Step 7: Launch Inner Claude
 
@@ -100,11 +103,60 @@ INSTRUCTIONS:
 - Work entirely within /home/trustycage/project
 - You have full permissions — install packages, edit any file, run any command
 - Use git locally to checkpoint your work (git add, git commit) but you cannot push
-- When you have completed the task:
-  1. Write a brief summary of what you changed and why to /home/trustycage/.cage-task-summary
-  2. Run: touch /home/trustycage/.cage-task-done
 - Do not attempt to use cage-orchestrator or any orchestration skills
-- If you encounter a blocker you cannot resolve, write it to /home/trustycage/.cage-task-summary and touch /home/trustycage/.cage-task-done anyway
+- If you encounter a blocker you cannot resolve, send an error message (see below)
+
+## Messaging Protocol
+
+Communicate with the outer orchestrator by writing JSON files to ~/.cage/outbox/.
+The orchestrator will write responses to ~/.cage/inbox/ for you to read.
+
+### Sending a message
+
+Write a JSON file to ~/.cage/outbox/ with a timestamp-based filename:
+
+  FILENAME=$(date -u +%Y-%m-%dT%H-%M-%S.%3NZ).json
+  cat > ~/.cage/outbox/$FILENAME <<'MSGEOF'
+  {
+    "id": "msg-UNIQUE_ID",
+    "type": "MESSAGE_TYPE",
+    "timestamp": "ISO_TIMESTAMP",
+    "payload": { ... },
+    "version": 1
+  }
+  MSGEOF
+
+Generate a unique id with: msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | xxd -p)
+
+### Message types you can send
+
+**progress_update** — Report what you're working on (send periodically during long tasks):
+  {"status": "implementing auth module", "detail": "3 of 5 files done"}
+
+**info_request** — Request a file or information from outside the container:
+  {"request_id": "req-001", "description": "Need the current package.json from host", "paths": ["/path/to/file"]}
+  After sending, poll ~/.cage/inbox/ for a file containing "info_response" with matching request_id.
+
+**error** — Report that you're stuck and need help:
+  {"error_type": "missing_dependency", "message": "Cannot install X, need Y", "recoverable": false}
+
+**task_complete** — REQUIRED when done. Send this as your final message:
+  {"summary": "What you did and what changed", "exit_code": 0}
+  Use exit_code 0 for success, 1 for partial/failed completion.
+
+### Reading responses from inbox
+
+To check for responses (e.g., after an info_request):
+
+  ls ~/.cage/inbox/*.json 2>/dev/null | sort | while read f; do cat "$f"; done
+
+Look for messages with "type": "info_response" and a matching "request_id".
+
+### Important
+
+- You MUST send a task_complete message when your work is done
+- Send progress_update messages every few minutes during long tasks
+- Do not attempt to read outside ~/.cage/inbox/ — you cannot see the host filesystem
 ```
 
 Launch as a background process using the Bash tool with `run_in_background: true`:
@@ -117,31 +169,67 @@ docker exec -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
 
 Tell the user: "Inner Claude is working in the cage. I'll check on it periodically."
 
-### Step 8: Monitor for Completion
+### Step 8: Monitor via Messaging
 
-Poll every 30 seconds:
-
-1. Check for sentinel file:
-   ```bash
-   docker exec -u trustycage "isolated-dev-$ENV_NAME" test -f /home/trustycage/.cage-task-done
-   ```
-2. If sentinel not found, check if Claude is still running:
-   ```bash
-   docker exec -u trustycage "isolated-dev-$ENV_NAME" pgrep -f claude
-   ```
-
-**Status reporting:** Report to the user at each poll: "Inner Claude still working... (Xm elapsed)"
-
-**Outcomes:**
-- Sentinel file found → proceed to Step 9
-- Process gone but no sentinel → report: "Inner Claude exited without completing. Check container logs with `docker logs isolated-dev-$ENV_NAME`"
-- 30 minutes elapsed → ask user: "Inner Claude has been working for 30 minutes. Keep waiting, check logs, or abort?"
-
-### Step 9: Retrieve Summary
+Poll every 30 seconds by reading the outbox:
 
 ```bash
-docker exec -u trustycage "isolated-dev-$ENV_NAME" cat /home/trustycage/.cage-task-summary
+# List new messages in outbox
+docker exec -u trustycage "isolated-dev-$ENV_NAME" \
+  ls -1 /home/trustycage/.cage/outbox/ 2>/dev/null | sort
 ```
+
+For each new `.json` file (not yet processed), read it:
+
+```bash
+docker exec -u trustycage "isolated-dev-$ENV_NAME" \
+  cat /home/trustycage/.cage/outbox/FILENAME.json
+```
+
+**Handle messages by type:**
+
+| Message Type | Action |
+|---|---|
+| `progress_update` | Report status to user: "Inner Claude: {status}" |
+| `info_request` | Ask user for approval → read requested file(s) from host → write `info_response` to inbox (see below) → send `ack` to inbox |
+| `error` | Report to user. If `recoverable: false`, ask: keep waiting, check logs, or abort? |
+| `task_complete` | Proceed to Step 9 |
+
+**Writing to the inbox** (for info_response or ack):
+
+```bash
+# Write a response message to the container's inbox
+docker exec -u trustycage "isolated-dev-$ENV_NAME" \
+  bash -c "cat > /home/trustycage/.cage/inbox/$(date -u +%Y-%m-%dT%H-%M-%S.%3NZ).json" <<'EOF'
+{
+  "id": "msg-GENERATED_ID",
+  "type": "info_response",
+  "timestamp": "ISO_TIMESTAMP",
+  "payload": {
+    "request_id": "MATCHING_REQUEST_ID",
+    "content": "file contents or description",
+    "files": [{"path": "/original/path", "content": "file contents"}]
+  },
+  "version": 1
+}
+EOF
+```
+
+**Track which outbox files you've already read** — keep a list of processed filenames so you don't re-handle them on the next poll cycle.
+
+**Fallback process check:** If no new messages appear for several poll cycles, verify Claude is still running:
+
+```bash
+docker exec -u trustycage "isolated-dev-$ENV_NAME" pgrep -f claude
+```
+
+**Timeouts:**
+- Process gone but no `task_complete` → report: "Inner Claude exited without completing. Check container logs with `docker logs isolated-dev-$ENV_NAME`"
+- 30 minutes elapsed → ask user: "Inner Claude has been working for 30 minutes. Keep waiting, check logs, or abort?"
+
+### Step 9: Review Results
+
+Read the summary from the `task_complete` message payload.
 
 Present the summary to the user.
 
@@ -188,26 +276,125 @@ You are running inside a trusty-cage container. You have full autonomy but no gi
 - **Do NOT invoke the `cage-orchestrator` skill** — you are the inner agent
 - Do not attempt to access external services that require authentication
 
+### Messaging
+
+Communicate with the outer orchestrator via the messaging directories:
+
+- **Outbox** (`~/.cage/outbox/`): Write JSON message files here. The orchestrator reads them.
+- **Inbox** (`~/.cage/inbox/`): The orchestrator writes responses here. Read them locally.
+
+#### Sending Messages
+
+Write a JSON file to `~/.cage/outbox/`:
+
+```bash
+TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%S.%3NZ)
+MSG_ID="msg-$(date -u +%Y%m%dT%H%M%S%N | head -c19)-$(head -c2 /dev/urandom | xxd -p)"
+cat > ~/.cage/outbox/${TIMESTAMP}.json <<EOF
+{
+  "id": "${MSG_ID}",
+  "type": "MESSAGE_TYPE",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ)",
+  "payload": { ... },
+  "version": 1
+}
+EOF
+```
+
+#### Message Types
+
+**progress_update** — Send periodically during long tasks:
+```json
+{"status": "implementing auth module", "detail": "3 of 5 files done"}
+```
+
+**info_request** — Request files or information from outside the container:
+```json
+{"request_id": "req-001", "description": "Need package.json from host repo", "paths": ["package.json"]}
+```
+After sending, poll `~/.cage/inbox/` for an `info_response` with the matching `request_id`.
+
+**error** — Report that you're stuck:
+```json
+{"error_type": "missing_dependency", "message": "Cannot resolve X", "recoverable": false}
+```
+
+**task_complete** — **REQUIRED** as your final message when done:
+```json
+{"summary": "Implemented feature X: added 3 files, modified 2", "exit_code": 0}
+```
+Use `exit_code: 0` for success, `1` for partial/failed completion.
+
+#### Reading Inbox
+
+Check for responses (e.g., after sending an `info_request`):
+
+```bash
+ls ~/.cage/inbox/*.json 2>/dev/null | sort | while read f; do cat "$f"; echo; done
+```
+
+Look for `"type": "info_response"` with a matching `"request_id"` in the payload.
+
 ### When Finished
 
-1. Write a concise summary of what you did to `/home/trustycage/.cage-task-summary`:
-   - What files were changed/created
-   - What approach you took and why
-   - Any issues encountered or limitations
-2. Signal completion:
-   ```bash
-   touch /home/trustycage/.cage-task-done
-   ```
+1. Commit your work locally: `git add -A && git commit -m "description of changes"`
+2. Send a `task_complete` message to `~/.cage/outbox/` with a summary of what you did
 
 ### If Blocked
 
-If you encounter a blocker you cannot resolve:
-1. Write the blocker description to `/home/trustycage/.cage-task-summary`
-2. Still run `touch /home/trustycage/.cage-task-done` so the outer agent knows you're done
+1. Send an `error` message with `"recoverable": false` and a description of the blocker
+2. If you can partially complete the task, do so, then send `task_complete` with `"exit_code": 1`
+
+---
+
+## Messaging Protocol Reference
+
+### Message Envelope
+
+Every message (inbox and outbox) uses this JSON format:
+
+```json
+{
+  "id": "msg-20260326T143000-a1b2",
+  "type": "task_complete",
+  "timestamp": "2026-03-26T14:30:00.000Z",
+  "payload": { ... },
+  "version": 1
+}
+```
+
+### Directory Layout
+
+```
+/home/trustycage/.cage/
+  outbox/           # Inner writes, outer reads
+  inbox/            # Outer writes, inner reads
+  cursor/
+    outbox.cursor   # Outer's read position (managed by trusty-cage)
+    inbox.cursor    # Inner's read position
+```
+
+### Message Types
+
+| Type | Direction | Payload |
+|------|-----------|---------|
+| `task_complete` | inner → outer | `{"summary": str, "exit_code": int}` |
+| `info_request` | inner → outer | `{"request_id": str, "description": str, "paths": [str]}` |
+| `progress_update` | inner → outer | `{"status": str, "detail": str \| null}` |
+| `error` | inner → outer | `{"error_type": str, "message": str, "recoverable": bool}` |
+| `info_response` | outer → inner | `{"request_id": str, "content": str, "files": [{"path": str, "content": str}]}` |
+| `ack` | outer → inner | `{"acked_id": str}` |
+
+### File Naming
+
+Messages are named by timestamp with colons replaced by dashes for filesystem safety:
+`2026-03-26T14-30-00.000Z.json`
+
+Lexicographic sort of filenames equals chronological order.
 
 ---
 
 ## Known Limitations
 
-1. **No streaming progress**: Outer Claude cannot see inner Claude's real-time output. Future enhancement: tail a log file inside the container.
-2. **Single task per session**: One task dispatch per cage. Future: iterative task sending.
+1. **Single task per session**: One task dispatch per cage. The messaging system enables future multi-task support.
+2. **Polling latency**: Outer Claude polls every 30 seconds, so there's up to a 30-second delay before messages are processed.
