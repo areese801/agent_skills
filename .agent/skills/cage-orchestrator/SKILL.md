@@ -106,7 +106,6 @@ INSTRUCTIONS:
 - You have full permissions — install packages, edit any file, run any command
 - Use git locally to checkpoint your work (git add, git commit) but you cannot push
 - Do not attempt to use cage-orchestrator or any orchestration skills
-- If you encounter a blocker you cannot resolve, send an error message (see below)
 
 ## Messaging
 
@@ -132,9 +131,39 @@ After sending info_request, check ~/.cage/inbox/ for responses:
 
 ### Important
 
-- You MUST run cage-send task_complete when your work is done
-- Send cage-send progress_update periodically during long tasks
-- Do not attempt to read outside ~/.cage/inbox/
+- You MUST send a task_complete message when your work is done
+- Send progress_update messages every few minutes during long tasks
+- Do not attempt to read outside ~/.cage/inbox/ — you cannot see the host filesystem
+
+## After Task Completion
+
+When you have completed the task:
+1. Send a `task_complete` message via `cage-send`
+2. Run the following polling script to wait for revised instructions:
+```bash
+INTERVAL=10; MAX_WAIT=3600; ELAPSED=0
+CURSOR_FILE=~/.cage/cursor/inbox.cursor
+CURSOR=$(cat "$CURSOR_FILE" 2>/dev/null || echo "")
+while [ $ELAPSED -lt $MAX_WAIT ]; do
+  for f in $(ls -1 ~/.cage/inbox/ 2>/dev/null | sort); do
+    if [ -z "$CURSOR" ] || [ "$f" \> "$CURSOR" ]; then
+      cat ~/.cage/inbox/"$f"
+      echo "$f" > "$CURSOR_FILE"
+      exit 0
+    fi
+  done
+  sleep $INTERVAL
+  ELAPSED=$((ELAPSED + INTERVAL))
+  INTERVAL=$((INTERVAL * 2 > 300 ? 300 : INTERVAL * 2))
+done
+echo "POLL_TIMEOUT"
+```
+3. If the script returns JSON, parse it — it will be a `task_revision` message. Read the `payload.instructions` field and continue working on the project accordingly. When done, repeat from step 1.
+4. If the script returns `POLL_TIMEOUT`, send a `going_idle` message via `cage-send`:
+   ```bash
+   cage-send going_idle '{"reason":"No task_revision received within polling timeout","waited_seconds":3600}'
+   ```
+   Then stop working.
 ```
 
 **Launch** — for short prompts, pass inline:
@@ -150,7 +179,13 @@ echo "$INNER_PROMPT" > /tmp/cage-prompt-$ENV_NAME.txt
 tc launch "$ENV_NAME" --prompt-file /tmp/cage-prompt-$ENV_NAME.txt --background
 ```
 
-Tell the user: "Inner Claude is working in the cage. I'll monitor for progress."
+Tell the user: "Inner Claude is working in the cage. I'll check on it periodically."
+
+### Step 8: Monitor Progress
+
+Monitor via CLI commands:
+- Stream inner Claude's reasoning: `trusty-cage logs "$ENV_NAME" -f`
+- Poll for structured messages: `trusty-cage outbox "$ENV_NAME" --poll`
 
 **Watch the stream (optional):** Show the user they can observe in real-time:
 
@@ -158,19 +193,17 @@ Tell the user: "Inner Claude is working in the cage. I'll monitor for progress."
 tc logs "$ENV_NAME" -f
 ```
 
-### Step 8: Monitor for Completion
-
 Use `tc outbox --poll` to block until a `task_complete` message arrives:
 
 ```bash
 tc outbox "$ENV_NAME" --poll --timeout 1800 --interval 30
 ```
 
-This automatically:
-- Prints `progress_update` messages as they arrive
-- Reports `error` messages
-- Exits with the inner Claude's exit code when `task_complete` arrives
-- Times out after 30 minutes (configurable)
+`tc outbox --poll` will:
+- Print `progress_update` and `error` messages as they arrive
+- Exit with code 0 when `task_complete` is received
+- Exit with code 2 when `going_idle` is received (inner Claude timed out waiting for revisions)
+- Exit with code 1 on error or timeout
 
 **If you need more control** (e.g., to handle `info_request` messages), poll manually:
 
@@ -191,17 +224,12 @@ tc inbox "$ENV_NAME" info_response '{"request_id":"req-001","content":"file cont
 docker exec -u trustycage "isolated-dev-$ENV_NAME" pgrep -f claude
 ```
 
-### Step 9: Review Results
+Handle the exit code:
+- **Exit 0** → proceed to Step 9
+- **Exit 2** → inform user that inner Claude went idle; offer to re-launch if needed
+- **Exit 1** → diagnose (check container status, `tc logs`)
 
-The `tc outbox --poll` command prints the task summary when it arrives. Present it to the user.
-
-For more detail, check the stream log:
-
-```bash
-tc logs "$ENV_NAME"
-```
-
-### Step 10: Export and Overlay
+### Step 9: Export and Overlay
 
 Export the cage environment directly into the current working directory:
 
@@ -211,21 +239,54 @@ tc export "$ENV_NAME" --yes --output-dir .
 
 This rsyncs container files into the current directory, excluding `.git/` so the host repo's git history is preserved.
 
-Run `git diff` and present the changes to the user.
+### Step 10: Review Changes with User
+
+Show the user what changed:
+```bash
+git diff
+git diff --stat
+```
+
+Discuss the results. Let the user test, inspect, or ask questions.
 
 **Do NOT auto-commit.** Let the user review and decide.
 
-### Step 11: Cleanup
+### Step 11: Revision Decision
 
 Ask the user:
+> "Would you like to revise and send inner Claude back to work, or are we done?"
 
-> "Would you like to destroy the cage environment (`tc destroy $ENV_NAME`), or keep it for follow-up work?"
+**If revise:**
+1. Gather revised instructions from the user — what to change, fix, or improve
+2. Send to inner Claude:
+   ```bash
+   trusty-cage inbox "$ENV_NAME" task_revision '{"instructions": "<user feedback here>"}'
+   ```
+3. Go back to **Step 8** (Monitor Progress)
 
-If destroy, run:
+**If done:**
+Proceed to Step 12.
 
+### Step 12: Cleanup
+
+Ask the user whether to:
+- `trusty-cage destroy "$ENV_NAME" --yes` — remove container + volume (host clone preserved)
+- Keep the cage alive for later use
+
+### Edge Cases
+
+**Inner Claude goes idle during revision cycle:**
+If `tc outbox --poll` exits with code 2 (`going_idle`), inner Claude's polling timed out. The cage is still alive. Inform the user and offer to re-launch:
 ```bash
-tc destroy "$ENV_NAME" --yes
+trusty-cage launch "$ENV_NAME" --prompt "Check your inbox for instructions and continue working on the project"
 ```
+This starts a fresh Claude session (losing conversational context) but preserves all file state.
+
+**Inner Claude crashes:**
+If `tc outbox --poll` times out (exit 1) without receiving `task_complete`, verify inner Claude is alive before sending a `task_revision`. Check container status or try `tc logs "$ENV_NAME"`. If dead, offer to re-launch.
+
+**Multiple rapid revisions:**
+Not supported — always wait for `task_complete` before offering another revision cycle.
 
 ---
 
@@ -275,8 +336,57 @@ ls ~/.cage/inbox/*.json 2>/dev/null | sort | while read f; do cat "$f"; echo; do
 
 ### If Blocked
 
-1. Send: `cage-send error '{"error_type":"...","message":"...","recoverable":false}'`
-2. If you can partially complete the task, do so, then: `cage-send task_complete '{"summary":"partial work","exit_code":1}'`
+1. Send an `error` message with `"recoverable": false` and a description of the blocker
+2. If you can partially complete the task, do so, then send `task_complete` with `"exit_code": 1`
+
+---
+
+## Messaging Protocol Reference
+
+### Message Envelope
+
+Every message (inbox and outbox) uses this JSON format:
+
+```json
+{
+  "id": "msg-20260326T143000-a1b2",
+  "type": "task_complete",
+  "timestamp": "2026-03-26T14:30:00.000Z",
+  "payload": { ... },
+  "version": 1
+}
+```
+
+### Directory Layout
+
+```
+/home/trustycage/.cage/
+  outbox/           # Inner writes, outer reads
+  inbox/            # Outer writes, inner reads
+  cursor/
+    outbox.cursor   # Outer's read position (managed by trusty-cage)
+    inbox.cursor    # Inner's read position
+```
+
+### Message Types
+
+| Type | Direction | Payload |
+|------|-----------|---------|
+| `task_complete` | inner → outer | `{"summary": str, "exit_code": int}` |
+| `info_request` | inner → outer | `{"request_id": str, "description": str, "paths": [str]}` |
+| `progress_update` | inner → outer | `{"status": str, "detail": str \| null}` |
+| `error` | inner → outer | `{"error_type": str, "message": str, "recoverable": bool}` |
+| `info_response` | outer → inner | `{"request_id": str, "content": str, "files": [{"path": str, "content": str}]}` |
+| `ack` | outer → inner | `{"acked_id": str}` |
+| `task_revision` | outer → inner | `{"instructions": str}` |
+| `going_idle` | inner → outer | `{"reason": str, "waited_seconds": int}` |
+
+### File Naming
+
+Messages are named by timestamp with colons replaced by dashes for filesystem safety:
+`2026-03-26T14-30-00.000Z.json`
+
+Lexicographic sort of filenames equals chronological order.
 
 ---
 
