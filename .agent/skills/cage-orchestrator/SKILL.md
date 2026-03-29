@@ -19,16 +19,30 @@ Check if running inside a cage:
 
 ## Outer Orchestration Workflow
 
-### Step 2: Validate Prerequisites
+### Step 2: Validate Prerequisites and Set Up Environment
 
-Check all of the following. If any fail, stop and report the error with fix instructions.
+**Set up a project-local venv with trusty-cage:**
+
+1. Check if `venv/bin/tc` exists in the project directory
+2. If not, create a venv and install trusty-cage:
+
+```bash
+python3 -m venv venv
+venv/bin/pip install trusty-cage
+```
+
+3. All subsequent `tc` commands in this workflow must use `venv/bin/tc` (not a global install)
+
+**Then check the remaining prerequisites.** If any fail, stop and report the error with fix instructions.
 
 | Check | Command | Error Message |
 |-------|---------|---------------|
-| trusty-cage installed | `which trusty-cage \|\| which tc` | "trusty-cage not found. Install with `pipx install trusty-cage`" |
+| trusty-cage installed | `venv/bin/tc --help` | "trusty-cage venv setup failed. Check Python and pip." |
 | Docker running | `docker info >/dev/null 2>&1` | "Docker is not running. Start Docker or OrbStack first." |
 | Git repo | `git rev-parse --is-inside-work-tree` | "Current directory is not a git repository." |
 | Git remote | `git remote get-url origin` | "No git remote 'origin' found. Add one before using cage-orchestrator." |
+
+**Important:** Ensure the project has a `.gitignore` that includes `venv/` so the venv is not committed to git and is protected from deletion during `tc export` (which uses `rsync --delete` but respects `.gitignore` patterns).
 
 ### Step 3: Gather Task Description
 
@@ -67,7 +81,7 @@ ENV_NAME="${ENV_NAME:-$(basename $(git rev-parse --show-toplevel))}"
 Check if the environment already exists:
 
 ```bash
-tc exists "$ENV_NAME"
+venv/bin/tc exists "$ENV_NAME"
 ```
 
 If exit code is 0 (exists), ask the user: **reuse**, **destroy and recreate**, or **abort**.
@@ -77,7 +91,7 @@ If exit code is 0 (exists), ask the user: **reuse**, **destroy and recreate**, o
 - Otherwise, use `--auth-mode subscription` (Claude Pro/Max — extracts OAuth tokens from macOS Keychain automatically)
 
 ```bash
-tc create "$REPO_URL" --name "$ENV_NAME" --auth-mode <mode> --no-attach
+venv/bin/tc create "$REPO_URL" --name "$ENV_NAME" --auth-mode <mode> --no-attach
 ```
 
 The `create` command automatically initializes messaging directories at `/home/trustycage/.cage/{outbox,inbox,cursor}` inside the container and installs `cage-send` at `/usr/local/bin/cage-send`.
@@ -87,10 +101,10 @@ The `create` command automatically initializes messaging directories at `/home/t
 **Pre-flight check** — verify Claude can start before sending the real task:
 
 ```bash
-tc launch "$ENV_NAME" --test
+venv/bin/tc launch "$ENV_NAME" --test
 ```
 
-If it fails, run `tc auth "$ENV_NAME" --login` to fix credentials interactively.
+If it fails, run `venv/bin/tc auth "$ENV_NAME" --login` to fix credentials interactively.
 
 **Construct the inner prompt:**
 
@@ -169,14 +183,14 @@ echo "POLL_TIMEOUT"
 **Launch** — for short prompts, pass inline:
 
 ```bash
-tc launch "$ENV_NAME" --prompt "$INNER_PROMPT" --background
+venv/bin/tc launch "$ENV_NAME" --prompt "$INNER_PROMPT" --background
 ```
 
 For long prompts, write to a temp file first:
 
 ```bash
 echo "$INNER_PROMPT" > /tmp/cage-prompt-$ENV_NAME.txt
-tc launch "$ENV_NAME" --prompt-file /tmp/cage-prompt-$ENV_NAME.txt --background
+venv/bin/tc launch "$ENV_NAME" --prompt-file /tmp/cage-prompt-$ENV_NAME.txt --background
 ```
 
 Tell the user: "Inner Claude is working in the cage. I'll check on it periodically."
@@ -184,19 +198,19 @@ Tell the user: "Inner Claude is working in the cage. I'll check on it periodical
 ### Step 8: Monitor Progress
 
 Monitor via CLI commands:
-- Stream inner Claude's reasoning: `trusty-cage logs "$ENV_NAME" -f`
-- Poll for structured messages: `trusty-cage outbox "$ENV_NAME" --poll`
+- Stream inner Claude's reasoning: `venv/bin/tc logs "$ENV_NAME" -f`
+- Poll for structured messages: `venv/bin/tc outbox "$ENV_NAME" --poll`
 
 **Watch the stream (optional):** Show the user they can observe in real-time:
 
 ```bash
-tc logs "$ENV_NAME" -f
+venv/bin/tc logs "$ENV_NAME" -f
 ```
 
 Use `tc outbox --poll` to block until a `task_complete` message arrives:
 
 ```bash
-tc outbox "$ENV_NAME" --poll --timeout 1800 --interval 30
+venv/bin/tc outbox "$ENV_NAME" --poll --timeout 1800 --interval 30
 ```
 
 `tc outbox --poll` will:
@@ -208,14 +222,14 @@ tc outbox "$ENV_NAME" --poll --timeout 1800 --interval 30
 **If you need more control** (e.g., to handle `info_request` messages), poll manually:
 
 ```bash
-tc outbox "$ENV_NAME"
+venv/bin/tc outbox "$ENV_NAME"
 ```
 
 To respond to an `info_request`:
 
 ```bash
 # Read the requested file from the host
-tc inbox "$ENV_NAME" info_response '{"request_id":"req-001","content":"file contents here","files":[{"path":"package.json","content":"..."}]}'
+venv/bin/tc inbox "$ENV_NAME" info_response '{"request_id":"req-001","content":"file contents here","files":[{"path":"package.json","content":"..."}]}'
 ```
 
 **Fallback process check:** If polling times out, verify Claude is still running:
@@ -227,14 +241,14 @@ docker exec -u trustycage "isolated-dev-$ENV_NAME" pgrep -f claude
 Handle the exit code:
 - **Exit 0** → proceed to Step 9
 - **Exit 2** → inform user that inner Claude went idle; offer to re-launch if needed
-- **Exit 1** → diagnose (check container status, `tc logs`)
+- **Exit 1** → diagnose (check container status, `venv/bin/tc logs`)
 
 ### Step 9: Export and Overlay
 
 Export the cage environment directly into the current working directory:
 
 ```bash
-tc export "$ENV_NAME" --yes --output-dir .
+venv/bin/tc export "$ENV_NAME" --yes --output-dir .
 ```
 
 This rsyncs container files into the current directory, excluding `.git/` so the host repo's git history is preserved.
@@ -260,7 +274,7 @@ Ask the user:
 1. Gather revised instructions from the user — what to change, fix, or improve
 2. Send to inner Claude:
    ```bash
-   trusty-cage inbox "$ENV_NAME" task_revision '{"instructions": "<user feedback here>"}'
+   venv/bin/tc inbox "$ENV_NAME" task_revision '{"instructions": "<user feedback here>"}'
    ```
 3. Go back to **Step 8** (Monitor Progress)
 
@@ -269,21 +283,27 @@ Proceed to Step 12.
 
 ### Step 12: Cleanup
 
-Ask the user whether to:
-- `trusty-cage destroy "$ENV_NAME" --yes` — remove container + volume (host clone preserved)
-- Keep the cage alive for later use
+Ask the user:
+
+> "Would you like to destroy the cage environment (`tc destroy $ENV_NAME`), or keep it for follow-up work?"
+
+If destroy, run:
+
+```bash
+venv/bin/tc destroy "$ENV_NAME" --yes
+```
 
 ### Edge Cases
 
 **Inner Claude goes idle during revision cycle:**
 If `tc outbox --poll` exits with code 2 (`going_idle`), inner Claude's polling timed out. The cage is still alive. Inform the user and offer to re-launch:
 ```bash
-trusty-cage launch "$ENV_NAME" --prompt "Check your inbox for instructions and continue working on the project"
+venv/bin/tc launch "$ENV_NAME" --prompt "Check your inbox for instructions and continue working on the project"
 ```
 This starts a fresh Claude session (losing conversational context) but preserves all file state.
 
 **Inner Claude crashes:**
-If `tc outbox --poll` times out (exit 1) without receiving `task_complete`, verify inner Claude is alive before sending a `task_revision`. Check container status or try `tc logs "$ENV_NAME"`. If dead, offer to re-launch.
+If `tc outbox --poll` times out (exit 1) without receiving `task_complete`, verify inner Claude is alive before sending a `task_revision`. Check container status or try `venv/bin/tc logs "$ENV_NAME"`. If dead, offer to re-launch.
 
 **Multiple rapid revisions:**
 Not supported — always wait for `task_complete` before offering another revision cycle.
