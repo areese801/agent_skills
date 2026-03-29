@@ -106,7 +106,9 @@ venv/bin/tc launch "$ENV_NAME" --test
 
 If it fails, run `venv/bin/tc auth "$ENV_NAME" --login` to fix credentials interactively.
 
-**Construct the inner prompt:**
+**Construct the inner prompt** from two parts — a task-specific section (which you write) and the Standard Messaging Block (which is always appended automatically):
+
+**Part 1 — Task Prompt** (customize this per task):
 
 ```
 You are an AI coding agent working inside an isolated trusty-cage container.
@@ -120,7 +122,11 @@ INSTRUCTIONS:
 - You have full permissions — install packages, edit any file, run any command
 - Use git locally to checkpoint your work (git add, git commit) but you cannot push
 - Do not attempt to use cage-orchestrator or any orchestration skills
+```
 
+**Part 2 — Standard Messaging Block** (appended automatically to every inner prompt — do not modify or omit):
+
+```
 ## Messaging
 
 Use the `cage-send` command to communicate with the outer orchestrator.
@@ -180,7 +186,7 @@ echo "POLL_TIMEOUT"
    Then stop working.
 ```
 
-**Launch** — for short prompts, pass inline:
+**Assemble and launch** — combine Part 1 + Part 2 into `INNER_PROMPT`. For short prompts, pass inline:
 
 ```bash
 venv/bin/tc launch "$ENV_NAME" --prompt "$INNER_PROMPT" --background
@@ -243,9 +249,17 @@ Handle the exit code:
 - **Exit 2** → inform user that inner Claude went idle; offer to re-launch if needed
 - **Exit 1** → diagnose (check container status, `venv/bin/tc logs`)
 
-### Step 9: Export and Overlay
+### Step 9: Export, Validate, and Overlay
 
-Export the cage environment directly into the current working directory:
+**9a — Pre-export snapshot:**
+
+Record the working tree state before exporting so you can detect unexpected changes:
+
+```bash
+git status --short
+```
+
+**9b — Export:**
 
 ```bash
 venv/bin/tc export "$ENV_NAME" --yes --output-dir .
@@ -253,12 +267,35 @@ venv/bin/tc export "$ENV_NAME" --yes --output-dir .
 
 This rsyncs container files into the current directory, excluding `.git/` so the host repo's git history is preserved.
 
+**9c — Post-export validation and restore:**
+
+Immediately after export, validate and fix the results:
+
+1. Show what changed:
+   ```bash
+   git diff --stat
+   ```
+
+2. Restore protected files that `tc export` may have overwritten or deleted:
+   ```bash
+   git checkout -- .gitignore
+   ```
+   If `.gitignore` was modified or deleted, warn the user: "Note: `.gitignore` was overwritten by `tc export` and has been restored."
+
+3. Compare `git diff --stat` output against the pre-export snapshot. Flag any unexpected file deletions or modifications that fall outside the task scope.
+
+4. If a test suite exists (e.g., `pytest`, `npm test`, `make test`), offer to run it to verify the exported code works on the host.
+
+5. Present a summary to the user:
+   - Files added (new from cage)
+   - Files modified (expected changes)
+   - Files unexpectedly deleted or overwritten (flag these)
+
 ### Step 10: Review Changes with User
 
-Show the user what changed:
+Show the user the detailed diff for review:
 ```bash
 git diff
-git diff --stat
 ```
 
 Discuss the results. Let the user test, inspect, or ask questions.
@@ -414,3 +451,21 @@ Lexicographic sort of filenames equals chronological order.
 
 1. **Single task per session**: One task dispatch per cage. The messaging system enables future multi-task support.
 2. **Polling latency**: `tc outbox --poll` checks every 30 seconds by default (configurable with `--interval`).
+
+---
+
+## Prompt Templates (Optional)
+
+These are suggested starting points for the Task Prompt (Part 1 of Step 7). Select the closest template and customize the task description. The Standard Messaging Block (Part 2) is appended automatically.
+
+**Add a Feature:**
+> Implement {feature description}. Write clean, idiomatic code following existing project conventions. Add tests if a test suite exists. Commit your work with a descriptive message.
+
+**Fix a Bug:**
+> Fix: {bug description}. Reproduce the issue first, then identify the root cause and implement a fix. Add a regression test if a test suite exists. Commit with a message describing the fix.
+
+**Add Tests:**
+> Add test coverage for {module or area}. Follow existing test patterns and conventions in the project. Aim for meaningful coverage of edge cases, not just happy paths. Commit your work.
+
+**Refactor:**
+> Refactor {area} to {goal}. Preserve all existing behavior — no functional changes. Run existing tests to verify nothing breaks. Commit your work with a descriptive message.
